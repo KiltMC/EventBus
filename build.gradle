@@ -10,7 +10,7 @@ plugins {
     id 'net.minecraftforge.licenser' version '1.0.1'
 }
 
-group = 'net.minecraftforge'
+group = 'xyz.bluspring'
 version = gradleutils.tagOffsetVersion
 print("Version: $version")
 
@@ -38,10 +38,6 @@ extraJavaModuleInfo {
     failOnMissingModuleInfo = false
 }
 
-changelog {
-    from '1.0.0'
-}
-
 jar {
     manifest {
         attributes([
@@ -50,7 +46,7 @@ jar {
             'Specification-Vendor':   'Forge Development LLC',
             'Implementation-Title':   'EventBus',
             'Implementation-Version': project.version,
-            'Implementation-Vendor':  'Forge Development LLC'
+            'Implementation-Vendor':  'KiltMC'
         ] as LinkedHashMap, 'net/minecraftforge/eventbus/service/')
     }
 }
@@ -67,7 +63,7 @@ publishing {
         pom {
             name = 'Event Bus'
             description = 'High performance Event Bus library'
-            url = 'https://github.com/MinecraftForge/EventBus'
+            url = 'https://github.com/KiltMC/EventBus'
 
             PomUtils.setGitHubDetails(pom, 'EventBus')
 
@@ -81,7 +77,13 @@ publishing {
     }
 
     repositories {
-        maven gradleutils.publishingForgeMaven
+        maven {
+            url = uri("https://mvn.devos.one/snapshots")
+            credentials {
+                username = System.getenv()["MAVEN_USER"]
+                password = System.getenv()["MAVEN_PASS"]
+            }
+        }
     }
 }
 
