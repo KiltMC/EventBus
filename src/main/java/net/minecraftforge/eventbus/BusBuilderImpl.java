@@ -53,7 +53,7 @@ public final class BusBuilderImpl implements BusBuilder {
 
     @Override
     public BusBuilder useModLauncher() {
-        this.modLauncher = true;
+        //this.modLauncher = true; // Kilt: Forcefully prevent using ModLauncher with Kilt
         return this;
     }
 
