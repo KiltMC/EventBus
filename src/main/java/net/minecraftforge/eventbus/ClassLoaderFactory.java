@@ -4,16 +4,16 @@
  */
 package net.minecraftforge.eventbus;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import net.minecraftforge.eventbus.api.Event;
+import net.minecraftforge.eventbus.api.IEventListener;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
 
-import net.minecraftforge.eventbus.api.Event;
-import net.minecraftforge.eventbus.api.IEventListener;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 import static org.objectweb.asm.Opcodes.*;
 
@@ -42,9 +42,16 @@ public class ClassLoaderFactory implements IEventListenerFactory {
     }
 
     private static final Class<?> defineClass(ClassNode node) {
-        var cw = new ClassWriter(0);
-        node.accept(cw);
-        return LOADER.define(node.name.replace('/', '.'), cw.toByteArray());
+        var name = node.name.replace('/', '.');
+
+        // Kilt: Try to reuse existing classes to avoid LinkageError
+        try {
+            return LOADER.loadClass(name);
+        } catch (Throwable ignored) {
+            var cw = new ClassWriter(0);
+            node.accept(cw);
+            return LOADER.define(name, cw.toByteArray());
+        }
     }
 
 
