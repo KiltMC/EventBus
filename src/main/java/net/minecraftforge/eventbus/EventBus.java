@@ -6,6 +6,7 @@ package net.minecraftforge.eventbus;
 
 import net.jodah.typetools.TypeResolver;
 import net.minecraftforge.eventbus.api.*;
+import net.minecraftforge.eventbus.internal.InternalUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.objectweb.asm.Type;
@@ -25,7 +26,9 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
     private static final Logger LOGGER = LogManager.getLogger();
     private static final boolean checkTypesOnDispatchProperty = Boolean.parseBoolean(System.getProperty("eventbus.checkTypesOnDispatch", "false"));
     private static final AtomicInteger maxID = new AtomicInteger(0);
+
     private final boolean trackPhases;
+    final EnumSet<EventPriority> phasesToTrack;
 
     private final ConcurrentHashMap<Object, List<IEventListener>> listeners = new ConcurrentHashMap<>();
     private final int busID = maxID.getAndIncrement();
@@ -41,16 +44,18 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
         ListenerList.resize(busID + 1);
         exceptionHandler = this;
         this.trackPhases = true;
+        this.phasesToTrack = BusBuilderImpl.ALL_PHASES;
         this.baseType = Event.class;
         this.checkTypesOnDispatch = checkTypesOnDispatchProperty;
         this.factory = new ClassLoaderFactory();
     }
 
-    private EventBus(final IEventExceptionHandler handler, boolean trackPhase, boolean startShutdown, Class<?> baseType, boolean checkTypesOnDispatch, IEventListenerFactory factory) {
+    private EventBus(final IEventExceptionHandler handler, boolean trackPhase, EnumSet<EventPriority> phasesToTrack, boolean startShutdown, Class<?> baseType, boolean checkTypesOnDispatch, IEventListenerFactory factory) {
         ListenerList.resize(busID + 1);
         if (handler == null) exceptionHandler = this;
         else exceptionHandler = handler;
         this.trackPhases = trackPhase;
+        this.phasesToTrack = trackPhase ? phasesToTrack : BusBuilderImpl.NO_PHASES;
         this.shutdown = startShutdown;
         this.baseType = baseType;
         this.checkTypesOnDispatch = checkTypesOnDispatch || checkTypesOnDispatchProperty;
@@ -58,7 +63,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
     }
 
     public EventBus(final BusBuilderImpl busBuilder) {
-        this(busBuilder.exceptionHandler, busBuilder.trackPhases, busBuilder.startShutdown,
+        this(busBuilder.exceptionHandler, busBuilder.trackPhases, busBuilder.phasesToTrack, busBuilder.startShutdown,
              busBuilder.markerType, busBuilder.checkTypesOnDispatch,
              busBuilder.modLauncher ? new ModLauncherFactory() : new ClassLoaderFactory());
     }
@@ -106,7 +111,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
         }
     }
 
-    private void parentTypes(Set<Class<?>> classes, Stack<Class<?>> stack, Class<?> cls) {
+    private static void parentTypes(Set<Class<?>> classes, Stack<Class<?>> stack, Class<?> cls) {
         for (var inf : cls.getInterfaces()) {
             if (classes.add(inf))
                 stack.push(inf);
@@ -162,7 +167,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
     private static final Predicate<Event> checkCancelled = e -> !e.isCanceled();
     @SuppressWarnings("unchecked")
     private static <T extends Event> Predicate<T> passCancelled(boolean ignored) {
-        return ignored ? null : (Predicate<T>)checkCancelled;
+        return ignored ? null : (Predicate<T>) checkCancelled;
     }
 
     private static <T extends GenericEvent<? extends F>, F> Predicate<T> passGenericFilter(Class<F> type, boolean ignored) {
@@ -246,7 +251,13 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
             throw new IllegalArgumentException(
                     "Listener for event " + eventClass + " takes an argument that is not a subtype of the base type " + baseType);
         }
-        addToListeners(consumer, eventClass, NamedEventListener.namedWrapper(e-> doCastFilter(filter, eventClass, consumer, e), consumer.getClass()::getName), priority);
+
+        @SuppressWarnings("unchecked")
+        IEventListener listener = (filter == checkCancelled || filter == null) && !InternalUtils.couldBeCancelled(eventClass)
+                ? e -> consumer.accept((T) e)
+                : e -> doCastFilter(filter, eventClass, consumer, e);
+
+        addToListeners(consumer, eventClass, NamedEventListener.namedWrapper(listener, consumer.getClass()::getName), priority);
     }
 
     @SuppressWarnings("unchecked")
@@ -258,8 +269,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
 
     private void register(Class<?> eventType, Object target, Method method) {
         try {
-            final ASMEventHandler asm = new ASMEventHandler(this.factory, target, method, IGenericEvent.class.isAssignableFrom(eventType));
-
+            ASMEventHandler asm = ASMEventHandler.of(this.factory, target, method, IGenericEvent.class.isAssignableFrom(eventType));
             addToListeners(target, eventType, asm, asm.getPriority());
         } catch (IllegalAccessException | InstantiationException | NoSuchMethodException | InvocationTargetException | ClassNotFoundException e) {
             LOGGER.error(EVENTBUS,"Error registering event handler: {} {}", eventType, method, e);
@@ -268,7 +278,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
 
     private void addToListeners(final Object target, final Class<?> eventType, final IEventListener listener, final EventPriority priority) {
         ListenerList listenerList = EventListenerHelper.getListenerList(eventType);
-        listenerList.register(busID, priority, listener);
+        listenerList.register(busID, this, priority, listener);
         List<IEventListener> others = listeners.computeIfAbsent(target, k -> Collections.synchronizedList(new ArrayList<>()));
         others.add(listener);
     }
@@ -298,7 +308,7 @@ public class EventBus implements IEventExceptionHandler, IEventBus {
         int index = 0;
         try {
             for (; index < listeners.length; index++) {
-                if (!trackPhases && Objects.equals(listeners[index].getClass(), EventPriority.class)) continue;
+                if (!trackPhases && listeners[index].getClass() == EventPriority.class) continue;
                 wrapper.invoke(listeners[index], event);
             }
         } catch (Throwable throwable) {
